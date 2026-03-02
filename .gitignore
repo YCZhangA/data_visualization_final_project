@@ -1,0 +1,7 @@
+# macOS junk
+.DS_Store
+**/.DS_Store
+
+# raw data (large files) - do not commit
+data/raw-data/Zip_zori_uc_sfrcondomfr_sm_sa_month.csv
+data/raw-data/tiger_tract/
