@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 import io
+import os
+import zipfile
+import urllib.request
 
 st.set_page_config(
     page_title="Chicago Rent Policy Dashboard",
@@ -38,11 +41,38 @@ def load_zillow():
     return df
 
 @st.cache_data
+@st.cache_data
 def load_geo():
-    gdf = gpd.read_file("data/raw-data/tiger_tract/tl_2024_17_tract.shp")
+    # Where we'll store downloaded/extracted TIGER files (so it works on Streamlit Cloud)
+    os.makedirs("data/derived-data", exist_ok=True)
+    zip_path = "data/derived-data/tl_2024_17_tract.zip"
+    out_dir  = "data/derived-data/tl_2024_17_tract"
+    shp_path = os.path.join(out_dir, "tl_2024_17_tract.shp")
+
+    # TIGER/Line 2024 Illinois Census Tracts (state FIPS = 17)
+    url = "https://www2.census.gov/geo/tiger/TIGER2024/TRACT/tl_2024_17_tract.zip"
+
+    # Download once
+    if not os.path.exists(zip_path):
+        urllib.request.urlretrieve(url, zip_path)
+
+    # Extract once
+    if not os.path.exists(shp_path):
+        os.makedirs(out_dir, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(out_dir)
+
+    # Load and process
+    gdf = gpd.read_file(shp_path)
     cook = gdf[gdf["COUNTYFP"] == "031"].copy()
     cook["geo_id"] = "1400000US" + cook["GEOID"]
     return cook.to_crs(epsg=3435)
+
+# def load_geo():
+#     gdf = gpd.read_file("data/raw-data/tiger_tract/tl_2024_17_tract.shp")
+#     cook = gdf[gdf["COUNTYFP"] == "031"].copy()
+#     cook["geo_id"] = "1400000US" + cook["GEOID"]
+#     return cook.to_crs(epsg=3435)
 
 acs    = load_acs()
 zillow = load_zillow()
