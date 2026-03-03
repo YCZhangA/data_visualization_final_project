@@ -4,3 +4,7 @@ numpy
 matplotlib
 altair
 pyarrow
+geopandas
+shapely
+pyproj
+fiona
