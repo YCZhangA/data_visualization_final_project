@@ -41,9 +41,9 @@ streamlit-app/
 
 ## Streamlit App
 
-[Link to be added after deployment]
+**Live Dashboard:** https://datavisualizationfinalproject-m7rnhvqfe9uemeai2vqwjt.streamlit.app/
 
-> Note: Streamlit apps may need to be "woken up" if they have not been run in the last 24 hours.
+> Note: Streamlit apps may need to be "woken up" if they have not been accessed in the last 24 hours.
 
 ## Data Sources
 
