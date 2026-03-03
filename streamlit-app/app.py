@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mticker
 import io
+from pathlib import Path
+
+ROOT = Path(__file__).parent.parent
 
 st.set_page_config(
     page_title="Chicago Rent Policy Dashboard",
@@ -29,17 +32,17 @@ st.markdown("""
 # ── Data loading ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_acs():
-    return pd.read_csv("data/derived-data/acs_clean.csv")
+    return pd.read_csv(ROOT / "data/derived-data/acs_clean.csv")
 
 @st.cache_data
 def load_zillow():
-    df = pd.read_csv("data/derived-data/zillow_clean.csv")
+    df = pd.read_csv(ROOT / "data/derived-data/zillow_clean.csv")
     df["date"] = pd.to_datetime(df["date"])
     return df
 
 @st.cache_data
 def load_geo():
-    gdf = gpd.read_file("data/raw-data/tiger_tract/tl_2024_17_tract.shp")
+    gdf = gpd.read_file(ROOT / "data/raw-data/tiger_tract/tl_2024_17_tract.shp")
     cook = gdf[gdf["COUNTYFP"] == "031"].copy()
     cook["geo_id"] = "1400000US" + cook["GEOID"]
     return cook.to_crs(epsg=3435)
