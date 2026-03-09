@@ -1,0 +1,435 @@
+---
+title: "Housing Rental Policies and Rent Growth Trends in the Chicago Metropolitan Area"
+author: "YC Zhang"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    self-contained: true
+    theme: darkly
+  pdf:
+    toc: true
+    geometry: margin=1in
+    fontsize: 11pt
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## 1. Introduction
+
+Housing affordability has become one of the most pressing urban policy challenges in American cities.
+In Chicago — the third-largest metropolitan area in the United States — renters face a dual pressure:
+nominal rents have risen sharply since 2015, while income growth has not kept pace for a large share
+of households. This mismatch produces *cost burden*, defined as spending more than 30% of gross
+household income on housing, a threshold long used by the U.S. Department of Housing and Urban
+Development (HUD) as an affordability benchmark.
+
+This project uses two publicly available datasets to examine three research questions:
+
+1. **Temporal dynamics**: How have rents evolved across Chicago ZIP codes from 2015 to 2026,
+   and how did macro shocks — the COVID-19 pandemic and its associated eviction moratorium —
+   shape that trajectory?
+2. **Spatial inequality**: Which Cook County census tracts bear the highest rent burdens, and
+   is geographic clustering visible?
+3. **Policy relevance**: Do observable rent trends and burden concentrations align with the
+   reach of key Chicago housing policies?
+
+---
+
+## 2. Data
+
+### 2.1 American Community Survey (ACS) — Census Tract Level
+
+The primary cross-sectional dataset comes from the U.S. Census Bureau's 2024 5-Year American
+Community Survey (ACS). Three tables are used:
+
+| ACS Table | Variable | Unit |
+|-----------|----------|------|
+| B25064 | Median gross rent | Census tract |
+| B19013 | Median household income | Census tract |
+| B25070 | Gross rent as % of household income (burden bins) | Census tract |
+
+All three tables cover **Cook County, Illinois**, which contains Chicago and its inner suburbs.
+After merging and cleaning (dropping tracts with suppressed estimates), the final dataset
+contains **1,254 census tracts**.
+
+```{python}
+import pandas as pd
+
+acs = pd.read_csv("data/derived-data/acs_clean.csv")
+print(f"Tracts: {len(acs):,}")
+acs[["tract", "county", "median_rent", "median_income",
+     "rent_to_income", "pct_burdened"]].head(8)
+```
+
+Key summary statistics:
+
+```{python}
+summary = acs[["median_rent", "median_income", "rent_to_income", "pct_burdened"]].describe().T
+summary.columns = ["Count","Mean","Std","Min","25%","50%","75%","Max"]
+summary = summary.round(1)
+summary.index = ["Median Monthly Rent ($)", "Median Household Income ($)",
+                 "Rent-to-Income Ratio (%)", "% Renters Cost-Burdened"]
+summary
+```
+
+### 2.2 Zillow Observed Rent Index (ZORI) — ZIP Code Level
+
+The longitudinal dataset is Zillow's Observed Rent Index (ZORI), a smoothed, seasonally adjusted
+measure of typical asking rents for single-family homes and condominiums. The raw file contains
+monthly observations for thousands of U.S. ZIP codes; this analysis filters to the
+**Chicago-Naperville-Elgin, IL-IN-WI** Core-Based Statistical Area, yielding
+**206 ZIP codes** with observations spanning **January 2015 through January 2026**.
+
+```{python}
+zillow = pd.read_csv("data/derived-data/zillow_clean.csv")
+zillow["date"] = pd.to_datetime(zillow["date"])
+print(f"ZIP codes: {zillow['zip_code'].nunique()}  |  "
+      f"Date range: {zillow['date'].min().date()} – {zillow['date'].max().date()}  |  "
+      f"Rows: {len(zillow):,}")
+zillow[["zip_code","city","county","date","zori"]].head(6)
+```
+
+---
+
+## 3. Results
+
+### 3.1 Temporal Rent Trends by ZIP Code
+
+The figure below plots the monthly ZORI for a representative sample of 15 Chicago ZIP codes,
+grouped into low-, mid-, and high-rent tiers based on their time-average rent level.
+Two policy events are marked with vertical reference lines.
+
+```{python}
+import altair as alt
+
+df_ts = zillow[zillow["city"] == "Chicago"].copy()
+df_ts["zip_code"] = df_ts["zip_code"].astype(str)
+
+annual_avg = df_ts.groupby("zip_code")["zori"].mean().reset_index().sort_values("zori")
+low  = annual_avg.head(5)["zip_code"].tolist()
+n    = len(annual_avg)
+mid  = annual_avg.iloc[n//2-2 : n//2+3]["zip_code"].tolist()
+high = annual_avg.tail(5)["zip_code"].tolist()
+selected = low + mid + high
+
+plot_df = df_ts[df_ts["zip_code"].isin(selected)].copy()
+
+def tier(z):
+    if z in low:  return "Low-rent"
+    if z in high: return "High-rent"
+    return "Mid-rent"
+plot_df["tier"] = plot_df["zip_code"].apply(tier)
+
+policy_events = pd.DataFrame([
+    {"date": pd.Timestamp("2020-03-01"), "event": "COVID-19 / Eviction Moratorium"},
+    {"date": pd.Timestamp("2022-09-01"), "event": "Moratorium Ends"},
+])
+
+line = alt.Chart(plot_df).mark_line(opacity=0.8, strokeWidth=1.6).encode(
+    x=alt.X("date:T", title="Date"),
+    y=alt.Y("zori:Q", title="Monthly Rent Index (USD)",
+            scale=alt.Scale(zero=False)),
+    color=alt.Color("zip_code:N",
+        scale=alt.Scale(scheme="tableau20"),
+        legend=alt.Legend(title="ZIP Code", columns=2)),
+    strokeDash=alt.StrokeDash("tier:N",
+        scale=alt.Scale(domain=["Low-rent","Mid-rent","High-rent"],
+                        range=[[4,2],[1,0],[1,0]]),
+        legend=alt.Legend(title="Tier")),
+    tooltip=["zip_code:N","tier:N",
+             alt.Tooltip("date:T", title="Date"),
+             alt.Tooltip("zori:Q", format="$,.0f", title="ZORI")]
+)
+rules = alt.Chart(policy_events).mark_rule(
+    color="gray", strokeDash=[6,3], opacity=0.65
+).encode(x="date:T")
+labels = alt.Chart(policy_events).mark_text(
+    angle=270, align="right", baseline="bottom",
+    dy=-5, fontSize=10, color="gray"
+).encode(x="date:T", text="event:N")
+
+(line + rules + labels).properties(
+    title=alt.TitleParams(
+        "Chicago ZIP Code Rent Trends, 2015–2026",
+        subtitle="Zillow ZORI · Low/Mid/High rent tiers · Policy events marked",
+        fontSize=14
+    ),
+    width=750, height=380
+).interactive()
+```
+
+**Key findings:**
+
+- **Sustained growth (2015–2019):** Average ZORI across Chicago ZIP codes rose from **\$1,493**
+  (Jan 2015) to **\$1,541** (2019 average) — a modest 3.2% gain over four years, reflecting
+  broadly stable conditions.
+- **COVID-19 disruption (2020–2021):** Rents dipped slightly in 2020–2021 (avg \$1,532 → \$1,521),
+  consistent with pandemic-era demand shocks (remote work, population movement). The eviction
+  moratorium kept many tenants housed but suppressed market rents temporarily.
+- **Post-moratorium surge (2022–2024):** Once the moratorium ended (September 2022), rents
+  accelerated sharply. The 2023 average reached **\$1,728** — a **12.1% increase** over 2019.
+  By 2024, the average hit **\$1,820**, representing a **+21.9% cumulative gain** since 2015.
+- **Tier divergence:** High-rent ZIP codes (North Side, Near North) grew both faster in
+  absolute terms and recovered more quickly post-COVID than low-rent ZIP codes on the South
+  and West sides, widening the intra-city rent gap.
+
+### 3.2 Spatial Distribution: Choropleth Maps
+
+The two maps below show, at the census tract level, (left) median gross monthly rent and
+(right) the share of renters who are cost-burdened (paying >30% of income on rent).
+
+```{python}
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.ticker as mticker
+
+gdf  = gpd.read_file("data/raw-data/tiger_tract/tl_2024_17_tract.shp")
+cook = gdf[gdf["COUNTYFP"] == "031"].copy()
+cook["geo_id"] = "1400000US" + cook["GEOID"]
+cook = cook.to_crs(epsg=3435)
+cook = cook.merge(
+    acs[["geo_id","median_rent","pct_burdened"]],
+    on="geo_id", how="left"
+)
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 8))
+fig.patch.set_facecolor("#1a1a2e")
+
+def choropleth(ax, col, title, cbar_label, cmap, fmt_fn):
+    data   = cook.dropna(subset=[col])
+    nodata = cook[cook[col].isna()]
+    vmin, vmax = data[col].quantile(0.02), data[col].quantile(0.98)
+    nodata.plot(ax=ax, color="#3a3a4a", linewidth=0)
+    data.plot(ax=ax, column=col, cmap=cmap,
+              vmin=vmin, vmax=vmax,
+              linewidth=0.05, edgecolor="#888", legend=False)
+    sm = plt.cm.ScalarMappable(cmap=cmap,
+                               norm=mcolors.Normalize(vmin=vmin, vmax=vmax))
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.02, shrink=0.72)
+    cb.set_label(cbar_label, color="white", fontsize=10)
+    cb.ax.yaxis.set_tick_params(color="white")
+    cb.outline.set_edgecolor("white")
+    plt.setp(cb.ax.yaxis.get_ticklabels(), color="white")
+    cb.ax.yaxis.set_major_formatter(mticker.FuncFormatter(fmt_fn))
+    ax.set_facecolor("#1a1a2e")
+    ax.set_title(title, color="white", fontsize=12, pad=8)
+    ax.axis("off")
+
+choropleth(axes[0], "median_rent",
+           "Median Gross Rent (2024 ACS)",
+           "Monthly Rent (USD)", "YlOrRd",
+           lambda x, _: f"${x:,.0f}")
+
+choropleth(axes[1], "pct_burdened",
+           "Share of Cost-Burdened Renters (2024 ACS)",
+           "% Cost-Burdened (>30%)", "RdPu",
+           lambda x, _: f"{x:.0f}%")
+
+fig.suptitle("Cook County Housing Affordability · Census Tract Level",
+             color="white", fontsize=14, y=0.98)
+plt.tight_layout()
+plt.savefig("choropleth_preview.png", dpi=130,
+            bbox_inches="tight", facecolor=fig.get_facecolor())
+plt.show()
+```
+
+**Key findings:**
+
+- **North-South rent gradient:** The highest-rent tracts cluster in the Near North Side,
+  Lincoln Park, and Lakeview neighborhoods. Median rents in these tracts frequently exceed
+  \$2,000/month. The South Side and parts of the West Side show substantially lower median
+  rents — some tracts below \$900/month.
+- **Burden does not mirror rent:** Cost burden is highest not in the most expensive tracts,
+  but in low-to-moderate rent areas where incomes are also low. **83.4%** of Cook County tracts
+  have more than 30% of their renters cost-burdened; **40.7%** exceed the 50% threshold — meaning
+  in nearly half of all tracts, the *majority* of renters are spending more than 30% of income
+  on housing.
+- **Geographic clustering:** Severe burden concentrates in a contiguous band of South and
+  West Side tracts (Englewood, Garfield Park, Austin, Roseland), consistent with historical
+  patterns of disinvestment and lower household incomes.
+
+### 3.3 Affordability Distribution
+
+```{python}
+df_rti = acs[acs["rent_to_income"] <= 100].copy()
+df_rti["burden_group"] = pd.cut(
+    df_rti["pct_burdened"],
+    bins=[0, 30, 50, 70, 101],
+    labels=["Low (<30%)", "Moderate (30–50%)", "High (50–70%)", "Severe (>70%)"]
+)
+
+hist = alt.Chart(df_rti).mark_bar(opacity=0.8).encode(
+    x=alt.X("rent_to_income:Q", bin=alt.Bin(maxbins=48),
+            title="Annual Rent-to-Income Ratio (%)"),
+    y=alt.Y("count():Q", title="Number of Census Tracts"),
+    color=alt.Color("burden_group:N",
+        scale=alt.Scale(
+            domain=["Low (<30%)","Moderate (30–50%)","High (50–70%)","Severe (>70%)"],
+            range=["#4daf4a","#ff7f00","#e41a1c","#984ea3"]
+        ),
+        legend=alt.Legend(title="Cost-Burden Rate", orient="top-right")
+    ),
+    tooltip=["burden_group:N", alt.Tooltip("count():Q", title="Tracts")]
+)
+rule30 = alt.Chart(pd.DataFrame({"x":[30]})).mark_rule(
+    color="white", strokeDash=[5,3], opacity=0.7
+).encode(x="x:Q")
+lbl30 = alt.Chart(pd.DataFrame({"x":[30],"t":["← HUD 30% threshold"]})).mark_text(
+    align="left", dx=4, dy=-120, color="white", fontSize=10
+).encode(x="x:Q", text="t:N")
+
+# ECDF
+df_ecdf = acs.dropna(subset=["pct_burdened"]).sort_values("pct_burdened").reset_index(drop=True)
+df_ecdf["ecdf"] = (df_ecdf.index + 1) / len(df_ecdf) * 100
+
+area = alt.Chart(df_ecdf).mark_area(
+    line={"color":"#e45756","strokeWidth":2},
+    color=alt.Gradient(
+        gradient="linear",
+        stops=[alt.GradientStop(color="#e4575650", offset=0),
+               alt.GradientStop(color="#e4575600", offset=1)],
+        x1=1, x2=1, y1=1, y2=0
+    )
+).encode(
+    x=alt.X("pct_burdened:Q", title="% Renters Cost-Burdened"),
+    y=alt.Y("ecdf:Q", title="Cumulative % of Tracts"),
+    tooltip=[
+        alt.Tooltip("pct_burdened:Q", format=".1f", title="% Burdened"),
+        alt.Tooltip("ecdf:Q", format=".1f", title="Cumulative Tracts %")
+    ]
+)
+ref = alt.Chart(pd.DataFrame({"y":[50]})).mark_rule(
+    color="gray", strokeDash=[4,3], opacity=0.6
+).encode(y="y:Q")
+ref_lbl = alt.Chart(pd.DataFrame({"y":[50],"x":[95],"t":["Median tract"]})).mark_text(
+    align="right", color="gray", fontSize=10
+).encode(x="x:Q", y="y:Q", text="t:N")
+
+chart_hist = (hist + rule30 + lbl30).properties(
+    width=380, height=300,
+    title=alt.TitleParams("Rent-to-Income Ratio Distribution",
+                          subtitle="Colored by cost-burden rate", fontSize=13)
+)
+chart_ecdf = (area + ref + ref_lbl).properties(
+    width=380, height=300,
+    title=alt.TitleParams("Cumulative Distribution: Cost-Burden Rate",
+                          subtitle="Share of tracts with ≤ X% of renters cost-burdened",
+                          fontSize=13)
+)
+
+alt.hconcat(chart_hist, chart_ecdf).resolve_scale(color="independent")
+```
+
+**Key findings:**
+
+- The RTI distribution is **right-skewed**, with most tracts clustered between 20–40%.
+  The median RTI across Cook County tracts is **21.9%** — technically below the 30% threshold
+  at the *median*, but this aggregate masks severe heterogeneity.
+- The ECDF (right panel) shows that only about **17%** of tracts have fewer than 30% of
+  their renters cost-burdened. The curve rises steeply between 30–60%, indicating that
+  most tracts fall in the "moderate to high" burden range.
+- Tracts colored **Severe** (>70% of renters cost-burdened) appear across the full RTI
+  range, including some with relatively modest median rents — confirming that burden is
+  driven by *income inadequacy* as much as by high rents.
+
+---
+
+## 4. Interactive Dashboard
+
+An interactive Streamlit dashboard supplements the static analysis above with dynamic
+filtering by city, ZIP code, year range, and variable selection.
+
+**Dashboard URL:** https://datavisualizationfinalproject-m7rnhvqfe9uemeai2vqwjt.streamlit.app/
+
+> Note: Streamlit apps may need to be "woken up" if they have not been accessed
+> in the last 24 hours.
+
+The app provides three tabs:
+
+- **Rent Trends Over Time** — multi-select ZIP code filter, year range slider, and
+  optional policy event overlay
+- **Choropleth Map** — switchable variable (rent / RTI / burden rate) and color scheme
+- **Affordability Distribution** — interactive histogram, ECDF, and rent-vs-burden scatter plot
+
+---
+
+## 5. Policy Discussion
+
+### 5.1 The Eviction Moratorium and Post-Pandemic Rent Acceleration
+
+Chicago's COVID-19 eviction moratorium (March 2020 – September 2022, with phased rollbacks)
+kept tens of thousands of tenants housed during the pandemic but had an unintended market
+effect: it compressed rental market activity and modestly suppressed ZORI during 2020–2021.
+Once the moratorium was fully lifted, a surge in landlord re-pricing drove the sharpest
+two-year rent increase in the dataset — **+12.1% from 2019 to 2023**. This acceleration
+is consistent with national evidence on "catch-up" pricing after moratorium expiration.
+
+The post-moratorium surge was not uniform. High-rent North Side ZIP codes recovered faster
+and peaked higher, while low-rent South Side ZIP codes showed smaller absolute gains but
+larger proportional income-to-rent deterioration, because starting incomes were already low.
+
+### 5.2 Geographic Concentration and the Limits of Market Solutions
+
+The choropleth maps reveal a persistent spatial pattern: severe cost burden is geographically
+concentrated in a contiguous corridor of South and West Side neighborhoods. These are the
+same areas that have historically faced **redlining, disinvestment**, and limited access to
+subsidized housing. High burden in low-rent tracts indicates that rents, even when nominally
+affordable, outpace incomes — a dynamic that market-rate construction (typically built in
+high-rent areas) does not directly address.
+
+### 5.3 Policy Implications
+
+| Observation | Policy implication |
+|-------------|-------------------|
+| Post-moratorium rent spike | Strengthen tenant relocation assistance and just-cause eviction protections |
+| Severe burden concentrated in South/West | Target voucher distribution and affordable unit production to high-burden corridors |
+| 83% of tracts exceed HUD 30% threshold | Expand income-based rental assistance eligibility; current programs are insufficient in scale |
+| Intra-city tier divergence | Anti-displacement zoning overlays in rapidly appreciating North Side tracts |
+
+Chicago's existing Affordable Requirements Ordinance (ARO) mandates that large residential
+developments include a share of affordable units, but the income thresholds and enforcement
+mechanisms have been criticized as inadequate. The concentration of burden shown in this
+analysis supports advocates' calls for a strengthened ARO with higher affordable shares and
+deeper income targeting.
+
+---
+
+## 6. Conclusion
+
+This analysis documents three interconnected patterns in Chicago's rental market:
+
+1. **Rents rose 21.9% between 2015 and 2024**, with the sharpest acceleration following the
+   end of the COVID-19 eviction moratorium in late 2022.
+2. **Geographic inequality is severe and spatially clustered**: the highest-rent areas are
+   on the North Side and downtown, but the highest *burden rates* are concentrated on the
+   South and West sides, where lower incomes make even moderate rents unaffordable.
+3. **Burden is the norm, not the exception**: 83% of Cook County census tracts have more than
+   30% of their renters cost-burdened, and 41% exceed the 50% threshold. This signals a
+   systemic affordability failure rather than an isolated problem.
+
+Together, these findings suggest that Chicago's housing affordability crisis requires
+policies that address *both* rent levels and income inadequacy — neither supply expansion
+alone nor income supports alone will suffice. Spatially targeted interventions in high-burden
+corridors, stronger tenant protections, and scaled-up rental assistance represent the most
+evidence-supported near-term policy directions.
+
+---
+
+## References
+
+- U.S. Census Bureau. (2024). *American Community Survey 5-Year Estimates*, Tables B25064,
+  B19013, B25070. Retrieved from https://data.census.gov
+- Zillow Research. (2024). *Zillow Observed Rent Index (ZORI)*. Retrieved from
+  https://www.zillow.com/research/data/
+- U.S. Census Bureau. (2024). *TIGER/Line Shapefiles: Census Tracts, Illinois*.
+  Retrieved from https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
+- City of Chicago. (2023). *Affordable Requirements Ordinance*.
+  Retrieved from https://www.chicago.gov/city/en/depts/doh/provdrs/developers/svcs/aro.html
+- National Low Income Housing Coalition. (2024). *Out of Reach 2024*.
