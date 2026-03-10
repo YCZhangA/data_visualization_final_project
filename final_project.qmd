@@ -153,14 +153,20 @@ labels = alt.Chart(policy_events).mark_text(
     dy=-5, fontSize=10, color="gray"
 ).encode(x="date:T", text="event:N")
 
-(line + rules + labels).properties(
+import os
+from IPython.display import Image
+os.makedirs("figures", exist_ok=True)
+
+ts_chart = (line + rules + labels).properties(
     title=alt.TitleParams(
         "Chicago ZIP Code Rent Trends, 2015–2026",
         subtitle="Zillow ZORI · Low/Mid/High rent tiers · Policy events marked",
         fontSize=14
     ),
     width=750, height=380
-).interactive()
+)
+ts_chart.save("figures/ts_chart.png")
+Image("figures/ts_chart.png")
 ```
 
 **Key findings:**
@@ -324,7 +330,9 @@ chart_ecdf = (area + ref + ref_lbl).properties(
                           fontSize=13)
 )
 
-alt.hconcat(chart_hist, chart_ecdf).resolve_scale(color="independent")
+dist_chart = alt.hconcat(chart_hist, chart_ecdf).resolve_scale(color="independent")
+dist_chart.save("figures/dist_chart.png")
+Image("figures/dist_chart.png")
 ```
 
 **Key findings:**
